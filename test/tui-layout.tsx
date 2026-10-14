@@ -13,7 +13,7 @@ const items = [0, 1].map(index => ({
   id: `skill-${index}`, name: `Skill ${index}`, description: "Synthetic description", count: index,
 }))
 
-async function mount(width: number, height: number, lines: number, competingHitLayer = false) {
+async function mount(width: number, height: number, lines: number, competingHitLayer = false, catalog = items) {
   const view = await createTestRenderer({ width, height })
   const [inputHeight, setInputHeight] = createSignal(lines)
   const [dialog, setDialog] = createSignal(false)
@@ -22,10 +22,10 @@ async function mount(width: number, height: number, lines: number, competingHitL
   const context = {
     location: { directory: "/synthetic" }, options: {}, renderer: view.renderer,
     theme: { text: { base: "white", muted: "gray" } },
-    data: { location: { skill: { sync: async () => {}, list: () => items } } },
+    data: { location: { skill: { sync: async () => {}, list: () => catalog } } },
     client: { rpc: () => ({ ranking: async () => {
       requests++
-      return { status: "ready", items, since: 1, until: 2, coverage: "Synthetic", error: null }
+      return { status: "ready", items: catalog, since: 1, until: 2, coverage: "Synthetic", error: null }
     } }) },
     keymap: { mode: { current: () => dialog() ? "modal" : "base" } },
     ui: {
@@ -110,6 +110,30 @@ test("mouse paging survives a later transparent hit-grid layer in another host b
     expect(view.captureCharFrame()).toContain("Skill 1")
     await view.click("<-")
     expect(view.captureCharFrame()).toContain("Skill 0")
+  } finally { view.renderer.destroy() }
+}, 10000)
+
+test("header, long skill name, usage and X share one row with explicit spacing", async () => {
+  const name = "sample-knowledge-base-sync"
+  const view = await mount(80, 30, 1, false, [{ ...items[0]!, name }])
+  try {
+    const rows = view.captureCharFrame().split("\n")
+    const header = rows.find(row => row.includes("Skill of the Day:"))!
+    expect(header).toContain(`Skill of the Day: ${name}`)
+    expect(header).toMatch(/sample-knowledge-base-sync\s+0 uses \* 30d\s+X/)
+    expect(rows.filter(row => row.includes(name))).toHaveLength(1)
+    await view.click("X")
+    expect(view.captureCharFrame()).not.toContain("Skill of the Day:")
+  } finally { view.renderer.destroy() }
+}, 10000)
+
+test("oversized header names are clipped before the usage and close control", async () => {
+  const view = await mount(80, 30, 1, false, [{ ...items[0]!, name: "A".repeat(200), count: 1234 }])
+  try {
+    const header = view.captureCharFrame().split("\n").find(row => row.includes("Skill of the Day:"))!
+    expect(header).toContain("…")
+    expect(header).toMatch(/\s+1234 uses \* 30d\s+X/)
+    expect(header.length).toBeLessThanOrEqual(80)
   } finally { view.renderer.destroy() }
 }, 10000)
 

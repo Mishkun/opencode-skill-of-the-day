@@ -28,7 +28,7 @@ function SkillCard() {
   const items = () => ranking()?.status === "ready" ? ranking()!.items : []
   const skill = () => items()[clampPage(index(), items().length)]
   function measure() {
-    const height = skill() ? (dimensions().height < 20 ? 4 : 5) : 3
+    const height = skill() ? 4 : 3
     if (anchor && !anchor.isDestroyed) setPlacement({
       x: anchor.screenX - context.renderer.root.screenX,
       y: anchor.screenY - context.renderer.root.screenY + 2,
@@ -53,10 +53,11 @@ function SkillCard() {
   const abort = new AbortController()
   let generation = 0
   let selectedID: string | undefined
-  const width = () => Math.max(1, Math.min(dimensions().width - 4, 75) - 2)
+  const usage = () => `${skill()?.count ?? 0} uses * 30d`
   const title = () => {
     const text = cleanDisplayText(skill()?.name ?? "")
-    const limit = Math.max(1, width() - 20)
+    // Outer padding, label, X button and name padding; reserve count text first.
+    const limit = Math.max(1, placement().width - 2 - 17 - 3 - 2 - usage().length)
     const chars = Array.from(text)
     return chars.length > limit ? chars.slice(0, limit - 1).join("") + "…" : text
   }
@@ -140,22 +141,24 @@ function SkillCard() {
       box.left = target.x
       box.top = target.y
       box.width = target.width
-      box.height = skill() ? 5 : 3
+      box.height = skill() ? 4 : 3
       box.zIndex = 1000
       box.focusable = false
     })
     return <Portal mount={context.renderer.root} ref={box => setContainer(box as BoxRenderable)}>
         <box width="100%" maxWidth={75} flexDirection="column" flexShrink={0}>
           <box width="100%" paddingX={1} flexDirection="column" flexShrink={0}>
-            <box flexDirection="row" justifyContent="space-between">
-              <text fg={context.theme.text.base}>Skill of the Day</text>
-              <Button label="X" run={hide} />
+            <box flexDirection="row" justifyContent="space-between" height={1} overflow="hidden">
+              <box flexShrink={0}><text fg={context.theme.text.base}>Skill of the Day:</text></box>
+              <Show when={skill()}>
+                <box flexGrow={1} minWidth={0} height={1} overflow="hidden" paddingX={1}>
+                  <text fg={context.theme.text.base}>{title()}</text>
+                </box>
+                <box flexShrink={0}><text fg={context.theme.text.muted}>{usage()}</text></box>
+              </Show>
+              <box flexShrink={0}><Button label="X" run={hide} /></box>
             </box>
             <Show when={skill()} fallback={<box height={1} overflow="hidden"><text fg={context.theme.text.muted}>{cleanDisplayText(status())}</text></box>}>
-              <box flexDirection="row" justifyContent="space-between" height={1} overflow="hidden">
-                <box flexGrow={1} minWidth={0} height={1} overflow="hidden"><text fg={context.theme.text.base}>{title()}</text></box>
-                <box flexShrink={0}><text fg={context.theme.text.muted}>{skill()?.count} uses · 30d</text></box>
-              </box>
               <box height={dimensions().height < 20 ? 1 : 2} overflow="hidden">
                 <text fg={context.theme.text.muted}>{cleanDisplayText(skill()?.description ?? "").slice(0, 400)}</text>
               </box>

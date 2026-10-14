@@ -106,9 +106,10 @@ avoiding later transparent host branches overwriting its mouse hit grid. Only
 the portal's own box is positioned; it stays within the prompt's 75-column
 width, below native modal layers, without squeezing the path/file row or
 covering the native textbox's mouse area.
-Descriptions are control-character-cleaned, limited to 400 characters and
-clipped to two lines; names are also bounded. Counts and controls have their
-own rows.
+The heading, skill name, usage and X share one line:
+`Skill of the Day: name 0 uses * 30d X`. Names are shortened before the count;
+explicit padding separates the fields. Descriptions are control-character-cleaned,
+limited to 400 characters and clipped to two lines. Paging and actions sit below.
 
 If the complete card cannot fit above the bottom status row plus one spare
 row, it is **hidden**, not clipped or moved to another footer. Terminals below
