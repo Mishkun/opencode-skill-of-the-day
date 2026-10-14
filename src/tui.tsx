@@ -138,12 +138,10 @@ function SkillCard() {
     else appendRemovalRequest(editor, selected.id)
   }
 
-  function Button(props: { label: string; run: () => void; filled?: boolean }) {
+  function Button(props: { label: string; run: () => void }) {
     const [hovered, setHovered] = createSignal(false)
-    // Theme-relative inverse video: X stands out normally; other controls invert on hover.
-    const inverted = () => props.filled ? !hovered() : hovered()
-    const background = () => inverted() ? context.theme.text.base : props.filled ? context.theme.background.action.secondary.base : undefined
-    const foreground = () => inverted() ? context.theme.background.base : context.theme.text.base
+    const background = () => hovered() ? context.theme.text.base : undefined
+    const foreground = () => hovered() ? context.theme.background.base : context.theme.text.base
     return <box paddingX={1} backgroundColor={background()} ref={(box) => { box.focusable = false }}
       onMouseOver={() => setHovered(true)} onMouseOut={() => setHovered(false)} onMouseDown={(event) => {
       if (event.button !== 0) return
@@ -180,7 +178,7 @@ function SkillCard() {
                 </box>
                 <box flexShrink={0}><text fg={context.theme.text.muted}>{usage()}</text></box>
               </Show>
-              <box flexShrink={0}><Button label="X" run={hide} filled /></box>
+              <box flexShrink={0}><Button label="X" run={hide} /></box>
             </box>
             <Show when={skill()} fallback={<box height={1} overflow="hidden"><text fg={context.theme.text.muted}>{cleanDisplayText(status())}</text></box>}>
               <box height={dimensions().height < 20 ? 1 : 2} overflow="hidden">

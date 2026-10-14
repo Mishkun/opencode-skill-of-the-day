@@ -101,21 +101,28 @@ async function movePointer(view: View, x: number, y: number) {
   await view.waitForVisualIdle()
 }
 
-test("X renders inverse video, changes colors on hover, then restores on mouse out", async () => {
+test("X shares normal and hover colors with Use and Remove", async () => {
   const view = await mount(80, 30, 1)
   try {
     const { x, y } = labelPosition(view, "X")
-    const normal = { fg: parseColor("black").toInts(), bg: parseColor("white").toInts() }
+    const use = labelPosition(view, "Use")
+    const normal = cellColors(view, use.x, use.y)
     expect(cellColors(view, x, y)).toEqual(normal)
-    // The inverse background covers the whole button, including its padding.
+    // Padding uses the same background as the label in both states.
     expect(cellColors(view, x - 1, y).bg).toEqual(normal.bg)
     expect(cellColors(view, x + 1, y).bg).toEqual(normal.bg)
-    const heading = labelPosition(view, "Skill of the Day:")
-    expect(cellColors(view, x, y)).not.toEqual(cellColors(view, heading.x, heading.y))
+    const remove = labelPosition(view, "Remove")
+    expect(cellColors(view, x, y)).toEqual(cellColors(view, remove.x, remove.y))
     await movePointer(view, x, y)
-    expect(cellColors(view, x, y)).toEqual({ fg: parseColor("white").toInts(), bg: parseColor("gray").toInts() })
-    expect(cellColors(view, x - 1, y).bg).toEqual(parseColor("gray").toInts())
-    expect(cellColors(view, x + 1, y).bg).toEqual(parseColor("gray").toInts())
+    const hover = cellColors(view, x, y)
+    expect(hover).toEqual({ fg: parseColor("black").toInts(), bg: parseColor("white").toInts() })
+    expect(cellColors(view, x - 1, y).bg).toEqual(hover.bg)
+    expect(cellColors(view, x + 1, y).bg).toEqual(hover.bg)
+    for (const label of ["Use", "Remove"]) {
+      const position = labelPosition(view, label)
+      await movePointer(view, position.x, position.y)
+      expect(cellColors(view, position.x, position.y)).toEqual(hover)
+    }
     await movePointer(view, 0, 0)
     expect(cellColors(view, x, y)).toEqual(normal)
     expect(cellColors(view, x - 1, y).bg).toEqual(normal.bg)

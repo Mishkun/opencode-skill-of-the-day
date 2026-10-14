@@ -94,8 +94,8 @@ occurs on the connected **server**, via a location-scoped custom RPC.
 Buttons are mouse actions, not global arrow-key overrides. They do not steal
 focus. Edits require the home route, base input mode and a public focused
 edit buffer; otherwise the plugin requests that you focus the home textbox.
-X uses theme-relative inverse colors at rest and a quieter action background
-on hover; all other buttons invert on hover and restore on mouse exit.
+All buttons, including X, use the same normal style, invert on hover and
+restore on mouse exit.
 
 During initial loading and location switches, the entire card is absent: no
 title, loading text, placeholder or reserved space. Once ready, same-location
