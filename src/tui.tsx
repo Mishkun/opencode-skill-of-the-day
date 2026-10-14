@@ -44,7 +44,6 @@ function SkillCard() {
   onCleanup(() => context.renderer.off(CliRenderEvents.FRAME, measure))
   createEffect(() => {
     dimensions()
-    ranking()
     setFits(false)
     // A hidden card has no changing renderables to schedule the measurement.
     context.renderer.requestRender()
@@ -53,7 +52,9 @@ function SkillCard() {
   const abort = new AbortController()
   let generation = 0
   let selectedID: string | undefined
-  const usage = () => `${skill()?.count ?? 0} uses * 30d`
+  let refreshing = false
+  let followup: ReturnType<typeof setTimeout> | undefined
+  const usage = () => `${skill()?.count ?? 0} uses 30d`
   const title = () => {
     const text = cleanDisplayText(skill()?.name ?? "")
     // Outer padding, label, X button and name padding; reserve count text first.
@@ -63,10 +64,12 @@ function SkillCard() {
   }
 
   async function refresh() {
-    if (hidden() || abort.signal.aborted) return
+    if (hidden() || abort.signal.aborted || refreshing) return
+    clearTimeout(followup)
+    refreshing = true
     const request = ++generation
     selectedID = skill()?.id ?? selectedID
-    setLoading(true)
+    // Initial/source-change loading is set separately. Updates and Retry retain the view.
     try {
       const target = location()
       const [, result] = await Promise.all([
@@ -86,18 +89,33 @@ function SkillCard() {
       selectedID = skill()?.id ?? selectedID
       setStatus(result.status === "unavailable" ? result.error ?? "History unavailable" :
         filtered.items.length ? "" : "No available configured skills")
+      if ("refreshInProgress" in result && result.refreshInProgress === true) {
+        followup = setTimeout(() => { void refresh() }, 2_000)
+      }
     } catch {
       if (abort.signal.aborted || request !== generation) return
-      setRanking(undefined)
+      if (ranking()?.status !== "ready") setRanking(undefined)
       setStatus("Skill usage unavailable · retry")
     } finally {
-      if (!abort.signal.aborted && request === generation) setLoading(false)
+      if (!abort.signal.aborted && request === generation) {
+        refreshing = false
+        setLoading(false)
+      }
     }
   }
 
   createEffect(() => {
     location()
-    untrack(() => { void refresh() })
+    untrack(() => {
+      selectedID = skill()?.id ?? selectedID
+      generation++
+      refreshing = false
+      clearTimeout(followup)
+      // A different location may use another database; do not display its predecessor.
+      setRanking(undefined)
+      setLoading(true)
+      void refresh()
+    })
   })
 
   onMount(() => {
@@ -106,7 +124,7 @@ function SkillCard() {
     const timer = setInterval(() => { if (!loading()) void refresh() }, delay * 1000)
     onCleanup(() => clearInterval(timer))
   })
-  onCleanup(() => abort.abort())
+  onCleanup(() => { clearTimeout(followup); abort.abort() })
 
   function edit(action: "add" | "remove") {
     const editor = homeEditor(context.ui.router.current().type, context.keymap.mode.current(), context.renderer.currentFocusedEditor)
@@ -120,13 +138,19 @@ function SkillCard() {
     else appendRemovalRequest(editor, selected.id)
   }
 
-  function Button(props: { label: string; run: () => void }) {
-    return <box paddingX={1} ref={(box) => { box.focusable = false }} onMouseDown={(event) => {
+  function Button(props: { label: string; run: () => void; filled?: boolean }) {
+    const [hovered, setHovered] = createSignal(false)
+    // Theme-relative inverse video: X stands out normally; other controls invert on hover.
+    const inverted = () => props.filled ? !hovered() : hovered()
+    const background = () => inverted() ? context.theme.text.base : props.filled ? context.theme.background.action.secondary.base : undefined
+    const foreground = () => inverted() ? context.theme.background.base : context.theme.text.base
+    return <box paddingX={1} backgroundColor={background()} ref={(box) => { box.focusable = false }}
+      onMouseOver={() => setHovered(true)} onMouseOut={() => setHovered(false)} onMouseDown={(event) => {
       if (event.button !== 0) return
       event.preventDefault()
       event.stopPropagation()
       props.run()
-    }}><text selectable={false} fg={context.theme.text.base}>{props.label}</text></box>
+    }}><text selectable={false} fg={foreground()}>{props.label}</text></box>
   }
 
   function FloatingCard() {
@@ -156,7 +180,7 @@ function SkillCard() {
                 </box>
                 <box flexShrink={0}><text fg={context.theme.text.muted}>{usage()}</text></box>
               </Show>
-              <box flexShrink={0}><Button label="X" run={hide} /></box>
+              <box flexShrink={0}><Button label="X" run={hide} filled /></box>
             </box>
             <Show when={skill()} fallback={<box height={1} overflow="hidden"><text fg={context.theme.text.muted}>{cleanDisplayText(status())}</text></box>}>
               <box height={dimensions().height < 20 ? 1 : 2} overflow="hidden">

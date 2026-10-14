@@ -17,6 +17,7 @@ export const SkillOfTheDay = Rpc.define({
           } },
           since: { type: "integer" }, until: { type: "integer" }, coverage: { type: "string" },
           error: { type: ["string", "null"] },
+          stale: { type: "boolean" }, refreshInProgress: { type: "boolean" },
         }, required: ["status", "items", "since", "until", "coverage", "error"], additionalProperties: false,
       },
     },

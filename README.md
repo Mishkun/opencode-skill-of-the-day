@@ -94,10 +94,13 @@ occurs on the connected **server**, via a location-scoped custom RPC.
 Buttons are mouse actions, not global arrow-key overrides. They do not steal
 focus. Edits require the home route, base input mode and a public focused
 edit buffer; otherwise the plugin requests that you focus the home textbox.
+X uses theme-relative inverse colors at rest and a quieter action background
+on hover; all other buttons invert on hover and restore on mouse exit.
 
-During initial loading and every refresh, the entire card is absent: no title,
-loading text, Retry button, placeholder, margin or reserved card space. Errors
-and empty registries show their status and Retry only after loading finishes.
+During initial loading and location switches, the entire card is absent: no
+title, loading text, placeholder or reserved space. Once ready, same-location
+refreshes keep the card visible and preserve selection and tie order. Errors
+without a usable result show their status and Retry after loading finishes.
 
 The card anchors to the public `after: "prompt.footer"` slot and appears as an
 absolute, full-width column two rows below the prompt's native footer. A
@@ -107,7 +110,7 @@ the portal's own box is positioned; it stays within the prompt's 75-column
 width, below native modal layers, without squeezing the path/file row or
 covering the native textbox's mouse area.
 The heading, skill name, usage and X share one line:
-`Skill of the Day: name 0 uses * 30d X`. Names are shortened before the count;
+`Skill of the Day: name 0 uses 30d X`. Names are shortened before the count;
 explicit padding separates the fields. Descriptions are control-character-cleaned,
 limited to 400 characters and clipped to two lines. Paging and actions sit below.
 
@@ -148,9 +151,26 @@ The count is **distinct skill uses per stored user turn**, not raw attempts:
 
 Each query opens SQLite with `readonly: true` and `PRAGMA query_only=ON`, checks
 the expected columns, reads a consistent transaction and closes it. Queries
-run in a cancellable worker off the server event loop with a 30-second limit
+run in a worker off the server event loop with a 30-second termination limit
 and a one-second lock wait. No cache/index database is created. No SQL/path
 input is accepted from the RPC caller; only installation options set a path.
+
+Historical aggregate counts are cached **in server memory for 60 seconds**, keyed
+by the resolved database path and shared across location handlers. The available
+registry and its metadata are read afresh on every RPC and joined to those counts;
+location-specific recommendations are never cached. Concurrent cold reads share
+one worker. Expired reads return last-good counts immediately and start a single
+background refresh. The TUI follows up every two seconds while the RPC reports
+`refreshInProgress`, adopting the new counts without blanking the ready card.
+
+Cache-backed RPC results include `stale` and `refreshInProgress`. Cached `since` and `until`
+always describe the original query window, not the time of a cache hit. A failed
+background query keeps last-good counts with `stale: true` and a fixed `error`;
+retries back off from five seconds to at most 60 seconds. Missing paths cannot
+borrow another database's cached counts. At most 16 source entries are retained,
+with least-recently-used eviction and ten-minute idle cleanup on access. Pending
+workers are not evicted or cancelled by another location's disposal. Configuration
+reload may reset the cache; there is no durable cache and no database/index change.
 
 SQL projects IDs, timestamps and aggregate counts, never prompt text, skill
 bodies, reasoning, tool output or credentials. The RPC returns configured
@@ -159,9 +179,11 @@ to fixed status messages, never logged or returned verbatim. The package makes
 no third-party network requests. Fixtures are synthetic; no personal history,
 actual configured registry dump or screenshots are included in this repository.
 
-Missing database, schema mismatch, invalid payload, query failure, timeout or
-RPC failure show **unavailable**, with Retry—not invented zero counts. An empty
-supported database really yields zero; an empty registry yields no skills.
+Without a successful result for the source, missing database, schema mismatch,
+invalid payload, query failure or timeout show **unavailable**, with Retry—not
+invented zero counts. Background failures preserve same-source last-good data;
+transient RPC failures preserve an already-ready card. An empty supported database
+really yields zero; an empty registry yields no skills.
 
 ## Known limits and verification
 

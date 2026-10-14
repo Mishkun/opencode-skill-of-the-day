@@ -39,8 +39,12 @@ const items = [0, 0, 0, 1, 1, 4].map((count, index) => ({
 const ready = (skills = items): RankingResult => ({
   status: "ready", items: skills, since: 1, until: 2, coverage: "Synthetic", error: null,
 })
+const theme = {
+  text: { base: "white", muted: "gray", action: { secondary: { base: "white", hovered: "black" } } },
+  background: { base: "black", action: { secondary: { base: "gray", hovered: "white" } } },
+}
 
-for (const height of [30]) test(`card and all wrapper spacing vanish during requests at 80x${height}`, async () => {
+for (const height of [30]) test(`cold loading and location switches hide the card at 80x${height}`, async () => {
   const view = await createTestRenderer({ width: 80, height })
   const requests: ReturnType<typeof Promise.withResolvers<RankingResult>>[] = []
   const [location, setLocation] = createSignal({ directory: "/synthetic" })
@@ -49,7 +53,7 @@ for (const height of [30]) test(`card and all wrapper spacing vanish during requ
     get location() { return location() },
     renderer: view.renderer,
     options: {},
-    theme: { text: { base: "white", muted: "gray" } },
+    theme,
     data: { location: { skill: { sync: async () => {}, list: () => items } } },
     client: { rpc: () => ({ ranking: () => {
       const request = Promise.withResolvers<RankingResult>()
@@ -108,14 +112,68 @@ for (const height of [30]) test(`card and all wrapper spacing vanish during requ
     await view.waitForFrame(frame => frame.includes("Retry"))
     await click("Retry")
     expect(requests.length).toBe(4)
-    expect(view.captureCharFrame().trim()).toBe("")
-    expect(anchorsOnly(view.renderer.root.getChildren())).toBe(true)
+    expect(view.captureCharFrame()).toContain("Skill of the Day")
+    expect(view.captureCharFrame()).toContain("Retry")
     requests[3]!.resolve(ready())
     await view.waitForFrame(frame => frame.includes(selected.name))
     await click("X")
     expect(view.captureCharFrame().trim()).toBe("")
     expect(anchorsOnly(view.renderer.root.getChildren())).toBe(true)
   } finally {
+    view.renderer.destroy()
+  }
+}, 10000)
+
+test("stale refresh and follow-up adoption never blank the ready card or reset selection", async () => {
+  const view = await createTestRenderer({ width: 80, height: 30 })
+  type Result = RankingResult & { stale?: boolean; refreshInProgress?: boolean }
+  const requests: ReturnType<typeof Promise.withResolvers<Result>>[] = []
+  let renderSlot: () => JSX.Element = () => null
+  host = {
+    location: { directory: "/synthetic" }, renderer: view.renderer, options: {},
+    theme,
+    data: { location: { skill: { sync: async () => {}, list: () => items } } },
+    client: { rpc: () => ({ ranking: () => {
+      const request = Promise.withResolvers<Result>()
+      requests.push(request)
+      return request.promise
+    } }) },
+    ui: { router: { current: () => ({ type: "home" }) },
+      slot: (contribution: { render: () => JSX.Element }) => { renderSlot = contribution.render } },
+  }
+  await plugin.setup(host as Context)
+  await render(() => renderSlot(), view.renderer)
+  let monitor: ReturnType<typeof setInterval> | undefined
+  const frames: string[] = []
+  try {
+    await view.renderOnce()
+    expect(view.captureCharFrame().trim()).toBe("")
+    requests[0]!.resolve({ ...ready(), stale: true, refreshInProgress: true })
+    await view.waitForFrame(frame => frame.includes("Skill of the Day"))
+    const rows = view.captureCharFrame().split("\n")
+    const y = rows.findIndex(row => row.includes("->"))
+    await view.mockMouse.click(rows[y]!.indexOf("->"), y)
+    await view.renderOnce()
+    const selected = items.find(item => view.captureCharFrame().includes(item.name))!
+    expect(selected).toBeDefined()
+    monitor = setInterval(() => frames.push(view.captureCharFrame()), 10)
+    await Bun.sleep(2_100)
+    expect(requests).toHaveLength(2)
+    expect(view.captureCharFrame()).toContain(selected.name)
+    expect(view.captureCharFrame()).not.toContain("Retry")
+    requests[1]!.resolve({ ...ready([...items].reverse().map(item => ({
+      ...item, count: item.id === selected.id ? 8 : item.count,
+    }))), stale: false, refreshInProgress: false })
+    await view.waitForFrame(frame => frame.includes("8 uses"))
+    await Bun.sleep(50)
+    expect(view.captureCharFrame()).toContain(selected.name)
+    expect(view.captureCharFrame()).toContain("6/6")
+    expect(frames.length).toBeGreaterThan(1)
+    expect(frames.every(frame => frame.includes("Skill of the Day"))).toBe(true)
+    await Bun.sleep(2_050)
+    expect(requests).toHaveLength(2)
+  } finally {
+    clearInterval(monitor)
     view.renderer.destroy()
   }
 }, 10000)

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { COVERAGE, rankSkills, WINDOW_MS, type AvailableSkill, type RankingResult } from "./ranking.ts"
+import type { CountsResult } from "./cache.ts"
 
 /** Same filename/channel resolution as OpenCode 2.0.28's CLI database-path.ts. Runs on the SERVER only. */
 export function serverDatabasePath(channel: string, override: unknown, env = process.env) {
@@ -54,7 +55,7 @@ function checkSchema(db: Database) {
   }
 }
 
-export function readRanking(path: string, available: readonly AvailableSkill[], now = Date.now()): RankingResult {
+export function readCounts(path: string, now = Date.now()): CountsResult {
   const since = now - WINDOW_MS
   let db: Database | undefined
   try {
@@ -78,14 +79,19 @@ export function readRanking(path: string, available: readonly AvailableSkill[], 
     if (unknownElement) throw new SchemaError()
     const rows = db.query(COUNTS).all({ since, until: now }) as { skill_id: string; count: number }[]
     db.exec("ROLLBACK")
-    return { status: "ready", items: rankSkills(available, new Map(rows.map(row => [row.skill_id, row.count]))),
+    return { status: "ready", counts: rows.map(row => [row.skill_id, row.count]),
       since, until: now, coverage: COVERAGE, error: null }
   } catch (error) {
     // Never expose an SQLite error: it could embed paths or private payload fragments.
-    return { status: "unavailable", items: [], since, until: now, coverage: COVERAGE,
+    return { status: "unavailable", counts: [], since, until: now, coverage: COVERAGE,
       error: error instanceof MissingDatabase ? "History database missing" :
         error instanceof SchemaError ? "History schema unsupported" : "History query unavailable" }
   } finally {
     db?.close()
   }
+}
+
+export function readRanking(path: string, available: readonly AvailableSkill[], now = Date.now()): RankingResult {
+  const { counts, ...result } = readCounts(path, now)
+  return { ...result, items: result.status === "ready" ? rankSkills(available, new Map(counts)) : [] }
 }

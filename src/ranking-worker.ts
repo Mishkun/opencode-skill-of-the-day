@@ -1,7 +1,6 @@
-import { readRanking } from "./database.ts"
-import type { AvailableSkill } from "./ranking.ts"
+import { readCounts } from "./database.ts"
 
-self.onmessage = (event: MessageEvent<{ path: string; available: AvailableSkill[]; now: number }>) => {
-  const { path, available, now } = event.data
-  self.postMessage(readRanking(path, available, now))
+self.onmessage = (event: MessageEvent<{ path: string; now: number }>) => {
+  const { path, now } = event.data
+  self.postMessage(readCounts(path, now))
 }

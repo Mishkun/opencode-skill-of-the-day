@@ -1,6 +1,7 @@
 import { expect, mock, test } from "bun:test"
 import { render } from "@opentui/solid"
 import { createTestRenderer } from "@opentui/core/testing"
+import { parseColor } from "@opentui/core"
 import { createSignal, Show } from "solid-js"
 import type { JSX } from "@opentui/solid"
 
@@ -21,7 +22,10 @@ async function mount(width: number, height: number, lines: number, competingHitL
   let requests = 0
   const context = {
     location: { directory: "/synthetic" }, options: {}, renderer: view.renderer,
-    theme: { text: { base: "white", muted: "gray" } },
+    theme: {
+      text: { base: "white", muted: "gray", action: { secondary: { base: "white", hovered: "black" } } },
+      background: { base: "black", action: { secondary: { base: "gray", hovered: "white" } } },
+    },
     data: { location: { skill: { sync: async () => {}, list: () => catalog } } },
     client: { rpc: () => ({ ranking: async () => {
       requests++
@@ -77,6 +81,94 @@ async function mount(width: number, height: number, lines: number, competingHitL
   return { ...view, setInputHeight, setDialog, click, requests: () => requests }
 }
 
+type View = Awaited<ReturnType<typeof mount>>
+function labelPosition(view: View, label: string) {
+  const rows = view.captureCharFrame().split("\n")
+  const y = rows.findIndex(row => row.includes(label))
+  expect(y).toBeGreaterThanOrEqual(0)
+  return { x: rows[y]!.indexOf(label), y }
+}
+function cellColors(view: View, x: number, y: number) {
+  let column = 0
+  for (const span of view.captureSpans().lines[y]!.spans) {
+    if (x >= column && x < column + span.width) return { fg: span.fg.toInts(), bg: span.bg.toInts() }
+    column += span.width
+  }
+  throw new Error("Expected a captured cell")
+}
+async function movePointer(view: View, x: number, y: number) {
+  await view.mockMouse.moveTo(x, y)
+  await view.waitForVisualIdle()
+}
+
+test("X renders inverse video, changes colors on hover, then restores on mouse out", async () => {
+  const view = await mount(80, 30, 1)
+  try {
+    const { x, y } = labelPosition(view, "X")
+    const normal = { fg: parseColor("black").toInts(), bg: parseColor("white").toInts() }
+    expect(cellColors(view, x, y)).toEqual(normal)
+    // The inverse background covers the whole button, including its padding.
+    expect(cellColors(view, x - 1, y).bg).toEqual(normal.bg)
+    expect(cellColors(view, x + 1, y).bg).toEqual(normal.bg)
+    const heading = labelPosition(view, "Skill of the Day:")
+    expect(cellColors(view, x, y)).not.toEqual(cellColors(view, heading.x, heading.y))
+    await movePointer(view, x, y)
+    expect(cellColors(view, x, y)).toEqual({ fg: parseColor("white").toInts(), bg: parseColor("gray").toInts() })
+    expect(cellColors(view, x - 1, y).bg).toEqual(parseColor("gray").toInts())
+    expect(cellColors(view, x + 1, y).bg).toEqual(parseColor("gray").toInts())
+    await movePointer(view, 0, 0)
+    expect(cellColors(view, x, y)).toEqual(normal)
+    expect(cellColors(view, x - 1, y).bg).toEqual(normal.bg)
+    expect(cellColors(view, x + 1, y).bg).toEqual(normal.bg)
+    expect(view.captureCharFrame()).toContain("Skill of the Day:")
+    expect(view.requests()).toBe(1)
+  } finally { view.renderer.destroy() }
+}, 10000)
+
+test("arrows, Use and Remove invert only on hover and restore without firing actions", async () => {
+  const view = await mount(80, 30, 1)
+  try {
+    const heading = labelPosition(view, "Skill of the Day:")
+    const normal = cellColors(view, heading.x, heading.y)
+    expect(normal.fg).toEqual(parseColor("white").toInts())
+    for (const label of ["<-", "->", "Use", "Remove"]) {
+      const { x, y } = labelPosition(view, label)
+      expect(cellColors(view, x, y)).toEqual(normal)
+      await movePointer(view, x, y)
+      expect(cellColors(view, x, y)).toEqual({ fg: parseColor("black").toInts(), bg: parseColor("white").toInts() })
+      expect(cellColors(view, x - 1, y).bg).toEqual(parseColor("white").toInts())
+      expect(cellColors(view, x + label.length, y).bg).toEqual(parseColor("white").toInts())
+      await movePointer(view, 0, 0)
+      expect(cellColors(view, x, y)).toEqual(normal)
+      expect(cellColors(view, x - 1, y).bg).toEqual(normal.bg)
+      expect(cellColors(view, x + label.length, y).bg).toEqual(normal.bg)
+    }
+    expect(view.captureCharFrame()).toContain("Skill 0")
+    expect(view.renderer.currentFocusedEditor!.plainText).toBe("")
+    expect(view.requests()).toBe(1)
+  } finally { view.renderer.destroy() }
+}, 10000)
+
+test("Retry inverts on hover and restores without issuing another RPC", async () => {
+  const view = await mount(80, 30, 1, false, [])
+  try {
+    const { x, y } = labelPosition(view, "Retry")
+    const heading = labelPosition(view, "Skill of the Day:")
+    const normal = cellColors(view, heading.x, heading.y)
+    expect(cellColors(view, x, y)).toEqual(normal)
+    await movePointer(view, x, y)
+    expect(cellColors(view, x, y)).toEqual({ fg: parseColor("black").toInts(), bg: parseColor("white").toInts() })
+    expect(cellColors(view, x - 1, y).bg).toEqual(parseColor("white").toInts())
+    expect(cellColors(view, x + "Retry".length, y).bg).toEqual(parseColor("white").toInts())
+    await movePointer(view, 0, 0)
+    expect(cellColors(view, x, y)).toEqual(normal)
+    expect(cellColors(view, x - 1, y).bg).toEqual(normal.bg)
+    expect(cellColors(view, x + "Retry".length, y).bg).toEqual(normal.bg)
+    expect(view.captureCharFrame()).toContain("No available configured skills")
+    expect(view.requests()).toBe(1)
+  } finally { view.renderer.destroy() }
+}, 10000)
+
 for (const [width, height, lines, visible] of [
   [140, 50, 1, true], [80, 30, 1, true], [80, 15, 1, false], [80, 30, 10, false],
 ] as const) test(`below-input fit gate at ${width}x${height}, ${lines} input lines`, async () => {
@@ -120,7 +212,7 @@ test("header, long skill name, usage and X share one row with explicit spacing",
     const rows = view.captureCharFrame().split("\n")
     const header = rows.find(row => row.includes("Skill of the Day:"))!
     expect(header).toContain(`Skill of the Day: ${name}`)
-    expect(header).toMatch(/sample-knowledge-base-sync\s+0 uses \* 30d\s+X/)
+    expect(header).toMatch(/sample-knowledge-base-sync\s+0 uses 30d\s+X/)
     expect(rows.filter(row => row.includes(name))).toHaveLength(1)
     await view.click("X")
     expect(view.captureCharFrame()).not.toContain("Skill of the Day:")
@@ -132,7 +224,7 @@ test("oversized header names are clipped before the usage and close control", as
   try {
     const header = view.captureCharFrame().split("\n").find(row => row.includes("Skill of the Day:"))!
     expect(header).toContain("…")
-    expect(header).toMatch(/\s+1234 uses \* 30d\s+X/)
+    expect(header).toMatch(/\s+1234 uses 30d\s+X/)
     expect(header.length).toBeLessThanOrEqual(80)
   } finally { view.renderer.destroy() }
 }, 10000)

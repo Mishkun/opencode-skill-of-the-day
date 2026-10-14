@@ -5,7 +5,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { readRanking, serverDatabasePath } from "../src/database.ts"
 import { WINDOW_MS } from "../src/ranking.ts"
-import { queryRanking } from "../src/worker.ts"
+import { queryCounts, queryRanking } from "../src/worker.ts"
+import { COUNTS_TTL_MS, createCountsCache } from "../src/cache.ts"
 
 const now = 2_000_000_000_000
 const skills = [
@@ -35,6 +36,39 @@ function fixture() {
 }
 
 describe("SQLite ranking", () => {
+  test("server counts cache joins fresh registries and refreshes the rolling SQL window", async () => {
+    const f = fixture()
+    f.message("boundary", "user", 0, { skills: [{ id: "alpha" }] }, now - WINDOW_MS)
+    f.message("recent", "user", 0, { skills: [{ id: "beta" }] }, now - 1, "second-session")
+    let clock = now
+    let queries = 0
+    let completion: Promise<unknown> | undefined
+    const cache = createCountsCache((path, time) => {
+      queries++
+      const work = queryCounts(path, time)
+      completion = work
+      return work
+    }, { clock: () => clock })
+    try {
+      const first = await cache.ranking(f.path, skills)
+      expect(first.items.map(item => item.count)).toEqual([1, 1])
+      expect(await cache.ranking(f.path, skills)).toEqual(first)
+      expect(queries).toBe(1)
+      const renamed = await cache.ranking(f.path, [{ ...skills[1]!, name: "Fresh registry name" }])
+      expect(renamed.items).toEqual([{ ...skills[1]!, name: "Fresh registry name", count: 1 }])
+      expect(queries).toBe(1)
+      clock += COUNTS_TTL_MS
+      const stale = await cache.ranking(f.path, skills)
+      expect(stale).toMatchObject({ stale: true, refreshInProgress: true, until: now })
+      expect(stale.items.map(item => item.count)).toEqual([1, 1])
+      await completion
+      await Bun.sleep(0)
+      const updated = await cache.ranking(f.path, skills)
+      expect(updated.items.map(item => [item.id, item.count])).toEqual([["alpha", 0], ["beta", 1]])
+      expect(updated).toMatchObject({ stale: false, refreshInProgress: false, until: clock })
+      expect(queries).toBe(2)
+    } finally { f.db.close() }
+  })
   test("worker returns validated ranking without blocking the event loop", async () => {
     const f = fixture()
     f.message("user", "user", 0, { skills: [{ id: "alpha" }] })
