@@ -70,10 +70,12 @@ occurs on the connected **server**, via a location-scoped custom RPC.
 ## Card actions
 
 - Initial selection: least-used available configured skill. Zero-use skills
-  are included. Ties use stable case-sensitive name ordering, then skill ID.
+  are included. Equal-count groups are randomized once per Home mount; their
+  order stays stable across polling and refresh. Usage counts always sort
+  ascending, even when counts change.
 - `<-` / `->`: page through the complete least-to-most-used ordering, without
   wrapping at either end. The current selection survives refresh if available.
-- **Add** inserts `@<id>` at the current cursor, adds word separators where
+- **Use** inserts `@<id>` at the current cursor, adds word separators where
   needed, and leaves the caret immediately after the skill token. Select the
   skill through OpenCode's native autocomplete before sending the prompt:
   literal mention text alone is not a committed skill attachment. While the
@@ -85,7 +87,7 @@ occurs on the connected **server**, via a location-scoped custom RPC.
 
   It **does not remove a skill**, open a modal, modify configuration or submit
   the request. Review the draft and choose whether to send it yourself.
-- Existing selected text is retained; selection is cleared and Add inserts at
+- Existing selected text is retained; selection is cleared and Use inserts at
   its end. No whole-buffer rewrite occurs, preserving native attachment marks.
 - **X** hides the widget only until home remount. No persisted snooze or timer.
 
@@ -93,12 +95,29 @@ Buttons are mouse actions, not global arrow-key overrides. They do not steal
 focus. Edits require the home route, base input mode and a public focused
 edit buffer; otherwise the plugin requests that you focus the home textbox.
 
-The card prepends the supported `home.footer` slot, centered at the prompt's
-75-column maximum width. It appears **below** the composer, in the bottom
-footer region, not directly adjacent to the textbox. Native shortcuts, path
-and home status row remain intact. Descriptions are control-character-cleaned,
-limited to 400 characters and clipped to two lines (one below 20 terminal
-rows); names are also bounded. Counts and controls have their own rows.
+During initial loading and every refresh, the entire card is absent: no title,
+loading text, Retry button, placeholder, margin or reserved card space. Errors
+and empty registries show their status and Retry only after loading finishes.
+
+The card anchors to the public `after: "prompt.footer"` slot and appears as an
+absolute, full-width column two rows below the prompt's native footer. A
+supported OpenTUI Solid `Portal` mounts the card-sized box on the renderer root,
+avoiding later transparent host branches overwriting its mouse hit grid. Only
+the portal's own box is positioned; it stays within the prompt's 75-column
+width, below native modal layers, without squeezing the path/file row or
+covering the native textbox's mouse area.
+Descriptions are control-character-cleaned, limited to 400 characters and
+clipped to two lines; names are also bounded. Counts and controls have their
+own rows.
+
+If the complete card cannot fit above the bottom status row plus one spare
+row, it is **hidden**, not clipped or moved to another footer. Terminals below
+20 rows and prompt widths below 40 columns also hide it. It returns when input
+shrinks or the viewport grows, unless dismissed with X. Selection, tie order
+and the single card/RPC model survive these layout changes. Geometry comes
+only from a plugin-owned public layout anchor and completed renderer frames.
+That anchor draws nothing, reserves no flow space and has no mouse hit target;
+no native parent layout, private IDs or host tree are inspected or mutated.
 
 ## Counts and SQLite privacy
 
@@ -157,7 +176,7 @@ supported database really yields zero; an empty registry yields no skills.
 - Native attachment fields and public editor APIs are supported, but this
   plugin does not expose a host-specific prompt controller or inspect private
   renderable IDs, trees or dialog stacks.
-- Live prototype validation on 2.0.28 confirmed mouse Add/native selection,
+- Live prototype validation on 2.0.28 confirmed mouse insertion/native selection,
   Unicode draft preservation, existing native skill and file attachments,
   removal append, selection preservation, X hiding and below-composer layout.
   No action submitted. A separate explicit guarded submit confirmed native
@@ -165,7 +184,18 @@ supported database really yields zero; an empty registry yields no skills.
 - Full-candidate validation on 2.0.28 confirmed server RPC against real history,
   next/previous paging, selection preservation across refresh, missing-database
   status and Retry recovery against a synthetic fixture, 80×30 layout, draft-only
-  Add/Remove, and X hiding. Forty-four tests, build and typecheck pass.
+  insertion/Remove, and X hiding. Version 0.1.1 has 55 tests, including seeded
+  tie-order, fit gates and compiled headless rendering. A transparent competing
+  hit-layer regression reproduces visible-but-unclickable controls before the
+  root-portal fix and verifies paging afterward.
+- Version 0.1.1 was also tested in a separate real OpenCode 2.0.28 instance:
+  blank initial/refresh loading, different equal-use selections after remount,
+  adjacent placement, actual mouse paging and draft-only Use/Remove. At 80×15
+  or with a long draft the card disappears; growing to 140×50 restores it.
+  Tests use a guard against prompt submission and a disposable runtime database.
+- Geometry is reevaluated after completed frames; rapid layout changes settle
+  on the following render. The fit gate reserves the normal one-row bottom
+  status plus one row; arbitrary third-party footer overlays are not measured.
 - The warning-toast refusal path for a focused dialog editor has not been
   independently proven; a native modal intercepted outside clicks in the live
   test. Remote-server transport and other operating systems are not live-tested.
@@ -189,6 +219,8 @@ runs these against public-safe fixtures only; it has no publish step.
 - https://github.com/anomalyco/opencode/blob/v2.0.28/packages/core/src/session/runner/to-llm-message.ts
 - https://github.com/anomalyco/opencode/blob/v2.0.28/packages/schema/src/session-message.ts
 - https://github.com/anomalyco/opencode/blob/v2.0.28/packages/tui/src/routes/home.tsx
+- https://github.com/anomalyco/opencode/blob/v2.0.28/packages/tui/src/component/prompt/index.tsx
+- https://github.com/anomalyco/opencode/blob/v2.0.28/packages/tui/src/plugin/render.tsx
 - https://github.com/anomalyco/opencode/blob/v2.0.28/packages/plugin/src/tui/context.ts
 
 MIT licensed. No Git initialization, commit, publication or user configuration

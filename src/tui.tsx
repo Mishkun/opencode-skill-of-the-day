@@ -1,26 +1,58 @@
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
-import { isEditBufferRenderable } from "@opentui/core"
-import { useTerminalDimensions } from "@opentui/solid"
+import { CliRenderEvents, isEditBufferRenderable, type BoxRenderable } from "@opentui/core"
+import { extend, Portal, useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createSignal, onCleanup, onMount, Show, untrack } from "solid-js"
 import { appendRemovalRequest, insertSkill } from "./editor.ts"
 import { clampPage, isRankingResult, movePage, type RankingResult } from "./ranking.ts"
 import { SkillOfTheDay } from "./rpc.ts"
-import { cleanDisplayText, createWidgetState } from "./widget.ts"
+import { cleanDisplayText, createUsageOrder, createWidgetState } from "./widget.ts"
 import { homeEditor } from "./editor-target.ts"
+import { cardFits } from "./placement.ts"
+import { CardAnchorRenderable } from "./anchor.ts"
+
+extend({ skill_of_day_anchor: CardAnchorRenderable })
 
 function SkillCard() {
   const context = usePlugin()
   const dimensions = useTerminalDimensions()
-  const { hidden, hide, index, setIndex } = createWidgetState()
+  const [fits, setFits] = createSignal(false)
+  const [placement, setPlacement] = createSignal({ x: 0, y: 0, width: 0 }, {
+    equals: (a, b) => a.x === b.x && a.y === b.y && a.width === b.width,
+  })
+  let anchor: BoxRenderable | undefined
+  const { hidden, hide, index, setIndex, loading, setLoading, visible } = createWidgetState()
+  const order = createUsageOrder()
   const [ranking, setRanking] = createSignal<RankingResult>()
-  const [status, setStatus] = createSignal("Loading skill usage…")
-  const [loading, setLoading] = createSignal(false)
+  const [status, setStatus] = createSignal("")
   const location = () => context.location ?? context.data.location.default()
   const items = () => ranking()?.status === "ready" ? ranking()!.items : []
   const skill = () => items()[clampPage(index(), items().length)]
+  function measure() {
+    const height = skill() ? (dimensions().height < 20 ? 4 : 5) : 3
+    if (anchor && !anchor.isDestroyed) setPlacement({
+      x: anchor.screenX - context.renderer.root.screenX,
+      y: anchor.screenY - context.renderer.root.screenY + 2,
+      width: anchor.width,
+    })
+    setFits(!!anchor && !anchor.isDestroyed && cardFits({
+      x: anchor.screenX, y: anchor.screenY, width: anchor.width,
+    }, dimensions(), height))
+  }
+  // Position can change without size changing (input growth, resize, dialogs).
+  // Read only our own public zero-height anchor after the host finishes layout.
+  onMount(() => context.renderer.on(CliRenderEvents.FRAME, measure))
+  onCleanup(() => context.renderer.off(CliRenderEvents.FRAME, measure))
+  createEffect(() => {
+    dimensions()
+    ranking()
+    setFits(false)
+    // A hidden card has no changing renderables to schedule the measurement.
+    context.renderer.requestRender()
+  })
   const rpc = context.client.rpc(SkillOfTheDay)
   const abort = new AbortController()
   let generation = 0
+  let selectedID: string | undefined
   const width = () => Math.max(1, Math.min(dimensions().width - 4, 75) - 2)
   const title = () => {
     const text = cleanDisplayText(skill()?.name ?? "")
@@ -32,6 +64,7 @@ function SkillCard() {
   async function refresh() {
     if (hidden() || abort.signal.aborted) return
     const request = ++generation
+    selectedID = skill()?.id ?? selectedID
     setLoading(true)
     try {
       const target = location()
@@ -44,11 +77,12 @@ function SkillCard() {
       const configured = context.data.location.skill.list(target)
       if (!configured) throw new Error("Registry unavailable")
       const available = new Set(configured.map(skill => skill.id))
-      const filtered = { ...result, items: result.items.filter(skill => available.has(skill.id)) }
-      const previousID = skill()?.id
+      const filtered = { ...result, items: order(result.items.filter(skill => available.has(skill.id))) }
+      const previousID = skill()?.id ?? selectedID
       setRanking(filtered)
       const previousIndex = filtered.items.findIndex(skill => skill.id === previousID)
       setIndex(previousIndex < 0 ? 0 : previousIndex)
+      selectedID = skill()?.id ?? selectedID
       setStatus(result.status === "unavailable" ? result.error ?? "History unavailable" :
         filtered.items.length ? "" : "No available configured skills")
     } catch {
@@ -94,44 +128,65 @@ function SkillCard() {
     }}><text selectable={false} fg={context.theme.text.base}>{props.label}</text></box>
   }
 
-  return <Show when={!hidden()}>
-    <box width="100%" marginTop={dimensions().height < 20 ? 0 : 1} paddingX={1} flexDirection="column" flexShrink={0}>
-      <box flexDirection="row" justifyContent="space-between">
-        <text fg={context.theme.text.base}>Skill of the Day</text>
-        <Button label="X" run={hide} />
-      </box>
-      <Show when={skill()} fallback={<text fg={context.theme.text.muted}>{status()}</text>}>
-        <box flexDirection="row" justifyContent="space-between" height={1} overflow="hidden">
-          <box flexGrow={1} minWidth={0} height={1} overflow="hidden"><text fg={context.theme.text.base}>{title()}</text></box>
-          <box flexShrink={0}><text fg={context.theme.text.muted}>{skill()?.count} uses · 30d</text></box>
+  function FloatingCard() {
+    const [container, setContainer] = createSignal<BoxRenderable>()
+    createEffect(() => {
+      const box = container()
+      const target = placement()
+      if (!box || box.isDestroyed) return
+      // Portal documents its own wrapping box through ref. Configure only that
+      // owned box: card-sized, above ordinary host branches, below dialogs.
+      box.position = "absolute"
+      box.left = target.x
+      box.top = target.y
+      box.width = target.width
+      box.height = skill() ? 5 : 3
+      box.zIndex = 1000
+      box.focusable = false
+    })
+    return <Portal mount={context.renderer.root} ref={box => setContainer(box as BoxRenderable)}>
+        <box width="100%" maxWidth={75} flexDirection="column" flexShrink={0}>
+          <box width="100%" paddingX={1} flexDirection="column" flexShrink={0}>
+            <box flexDirection="row" justifyContent="space-between">
+              <text fg={context.theme.text.base}>Skill of the Day</text>
+              <Button label="X" run={hide} />
+            </box>
+            <Show when={skill()} fallback={<box height={1} overflow="hidden"><text fg={context.theme.text.muted}>{cleanDisplayText(status())}</text></box>}>
+              <box flexDirection="row" justifyContent="space-between" height={1} overflow="hidden">
+                <box flexGrow={1} minWidth={0} height={1} overflow="hidden"><text fg={context.theme.text.base}>{title()}</text></box>
+                <box flexShrink={0}><text fg={context.theme.text.muted}>{skill()?.count} uses · 30d</text></box>
+              </box>
+              <box height={dimensions().height < 20 ? 1 : 2} overflow="hidden">
+                <text fg={context.theme.text.muted}>{cleanDisplayText(skill()?.description ?? "").slice(0, 400)}</text>
+              </box>
+              <box flexDirection="row">
+                <Button label="<-" run={() => setIndex(movePage(index(), -1, items().length))} />
+                <Button label="->" run={() => setIndex(movePage(index(), 1, items().length))} />
+                <Button label="Use" run={() => edit("add")} />
+                <Button label="Remove" run={() => edit("remove")} />
+                <text fg={context.theme.text.muted}>{clampPage(index(), items().length) + 1}/{items().length}</text>
+              </box>
+            </Show>
+            <Show when={!skill()}><Button label="Retry" run={() => { if (!loading()) void refresh() }} /></Show>
+          </box>
         </box>
-        <box height={dimensions().height < 20 ? 1 : 2} overflow="hidden">
-          <text fg={context.theme.text.muted}>{cleanDisplayText(skill()?.description ?? "").slice(0, 400)}</text>
-        </box>
-        <box flexDirection="row">
-          <Button label="<-" run={() => setIndex(movePage(index(), -1, items().length))} />
-          <Button label="->" run={() => setIndex(movePage(index(), 1, items().length))} />
-          <Button label="Add" run={() => edit("add")} />
-          <Button label="Remove" run={() => edit("remove")} />
-          <text fg={context.theme.text.muted}>{clampPage(index(), items().length) + 1}/{items().length}</text>
-        </box>
-      </Show>
-      <Show when={!skill()}><Button label={loading() ? "Loading…" : "Retry"} run={() => { if (!loading()) void refresh() }} /></Show>
-    </box>
-  </Show>
+    </Portal>
+  }
+
+  return <>
+    <skill_of_day_anchor position="absolute" left={0} right={0} top={0} height={0}
+      ref={(box: BoxRenderable) => { anchor = box; box.focusable = false }} />
+    <Show when={visible() && fits()}><FloatingCard /></Show>
+  </>
 }
 
 export default Plugin.define({
   id: "skill-of-the-day.tui",
   setup(context) {
     return context.ui.slot({
-      prepend: "home.footer",
+      after: "prompt.footer",
       render: () => <Show when={context.ui.router.current().type === "home"}>
-        <box width="100%" alignItems="center" flexDirection="column" flexShrink={0} paddingX={2}>
-          <box width="100%" maxWidth={75} flexDirection="column" flexShrink={0}>
-            <SkillCard />
-          </box>
-        </box>
+        <SkillCard />
       </Show>,
     })
   },
